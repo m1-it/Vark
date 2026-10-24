@@ -1,72 +1,64 @@
-use anyhow::Result;
-use serde::Serialize;
-use std::{fs, path::PathBuf};
-use vark_api::Engine;
-use vark_config::VarkConfig;
+mod dataset;
+mod metrics;
+mod runner;
 
-#[derive(Debug, Serialize)]
-struct EvalReport {
-    cases: usize,
-    corrected_accuracy: f32,
-    consistency: f32,
-    teacher_calls: u64,
-    total_llm_calls: u64,
-    teacher_call_rate: f32,
-    estimated_cost: f64,
-}
+use anyhow::{bail, Context, Result};
+use metrics::{enforce_regression, EvalReport};
+use std::{env, fs, path::PathBuf};
 
 fn main() -> Result<()> {
-    let root = std::env::temp_dir().join(format!("vark-eval-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root)?;
-    let mut config = VarkConfig::default();
-    config.memory_db = root.join("memory.jsonl").to_string_lossy().into();
-    config.checkpoint_dir = root.join("checkpoints").to_string_lossy().into();
-    let mut engine = Engine::new(config.clone())?;
-    let cases = [(
-        "Rust adalah bahasa pemrograman sistem.",
-        "Apa Rust?",
-        "Rust adalah bahasa pemrograman sistem.",
-    )];
-    let mut correct = 0;
-    let mut consistent = 0;
-    for (fact, question, expected) in cases {
-        let _ = engine.chat(fact)?;
-        let first = engine.chat(question)?.text;
-        let second = engine.chat(question)?.text;
-        let clean = |s: &str| s.to_ascii_lowercase().replace(['.', ',', '!', '?'], "");
-        if clean(&first).contains(&clean(expected)) {
-            correct += 1;
-        }
-        if first == second {
-            consistent += 1;
+    let mut json_only = false;
+    let mut check_baseline = false;
+    let mut save_report = None;
+    let mut args = env::args().skip(1);
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--json" => json_only = true,
+            "--check-baseline" => check_baseline = true,
+            "--save-report" => {
+                save_report = Some(PathBuf::from(
+                    args.next().context("--save-report memerlukan path")?,
+                ));
+            }
+            unknown => bail!("argumen evaluator tidak dikenal: {unknown}"),
         }
     }
-    let stats = engine.routing_stats();
-    let calls = stats
-        .as_ref()
-        .map(|s| s.student_calls + s.teacher_calls)
-        .unwrap_or(0);
-    let teachers = stats.as_ref().map(|s| s.teacher_calls).unwrap_or(0);
-    let report = EvalReport {
-        cases: cases.len(),
-        corrected_accuracy: correct as f32 / cases.len() as f32,
-        consistency: consistent as f32 / cases.len() as f32,
-        teacher_calls: teachers,
-        total_llm_calls: calls,
-        teacher_call_rate: if calls == 0 {
-            0.0
-        } else {
-            teachers as f32 / calls as f32
-        },
-        estimated_cost: stats.map(|s| s.estimated_cost).unwrap_or(0.0),
-    };
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    let output = PathBuf::from("data/evaluation-latest.json");
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
+
+    let report = runner::evaluate()?;
+    if check_baseline {
+        let baseline_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("baselines/baseline_v0.json");
+        let baseline: EvalReport = serde_json::from_slice(
+            &fs::read(&baseline_path)
+                .with_context(|| format!("membaca {}", baseline_path.display()))?,
+        )?;
+        enforce_regression(&baseline, &report)?;
     }
-    fs::write(output, serde_json::to_vec_pretty(&report)?)?;
-    let _ = fs::remove_dir_all(root);
+    let json = serde_json::to_string_pretty(&report)?;
+    if let Some(path) = save_report {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, format!("{json}\n"))?;
+    }
+    println!("{json}");
+    if !json_only {
+        println!("\n{}", report.table());
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_engine_evaluation_does_not_regress_from_baseline() {
+        let baseline_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("baselines/baseline_v0.json");
+        let baseline: EvalReport =
+            serde_json::from_slice(&fs::read(baseline_path).unwrap()).unwrap();
+        let current = runner::evaluate().unwrap();
+        enforce_regression(&baseline, &current).unwrap();
+    }
 }

@@ -9,3 +9,7 @@ serde.workspace = true
 serde_json.workspace = true
 vark-api = { path = "../vark-api" }
 vark-config = { path = "../vark-config" }
+vark-decoder = { path = "../vark-decoder" }
+vark-hashing = { path = "../vark-hashing" }
+vark-memory = { path = "../vark-memory" }
+vark-conversation = { path = "../vark-conversation" }

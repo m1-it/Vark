@@ -1,0 +1,23 @@
+name: Rust validation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Test workspace
+        run: cargo test --workspace --locked
+      - name: Clippy without warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Evaluate fixed corpus and enforce baseline
+        run: scripts/evaluate.sh

@@ -33,7 +33,7 @@ crates/
 ├── vark-learning/src/      # STDP, replay/EWC, training
 ├── vark-llm/src/           # backend LLM dan router guru-murid
 ├── vark-api/src/           # engine, Axum router, server
-└── vark-eval/src/          # evaluasi tetap dan metrik
+└── vark-eval/              # runner, metrik, baseline, dataset JSONL ber-hash
 ```
 
 `vark-config` mengatur konfigurasi jaringan, memori, user, guru, murid, retry, token budget, threshold, dan biaya. `vark-conversation` menyatukan retrieval, graph, LIF, tokenizer, decoder, router, feedback, serta log. `vark-memory` menyediakan JSONL append-only, recovery, FactNode, graph semantik, conversation log, redaksi, kompaktasi, dan backup.
@@ -106,10 +106,15 @@ Server memakai engine terpisah per `user_id`, dengan memory database, checkpoint
 ## Evaluasi
 
 ```bash
-cargo run -p vark-eval
+cargo run -p vark-eval -- --json
+scripts/eval.sh
 ```
 
-Runner menyimpan `data/evaluation-latest.json` dan mengukur akurasi fakta yang dikoreksi, konsistensi antar-sesi, jumlah/rasio panggilan guru, serta estimasi biaya. Artefak runtime dikecualikan dari arsip distribusi.
+Runner menggunakan snapshot lokal `crates/vark-eval/data/` dengan checksum SHA-256 pada `manifest.json`: 103 QA faktual (31 tidak dapat dijawab), 40 transitive, 30 perbandingan, 30 aturan, 20 kontradiksi, 30 konteks panjang unik, dan 30 tugas komposisi/generasi dengan target satu kalimat panjang. Semua kasus menjalankan `Engine` VARK; korpus tidak memanggil layanan model eksternal. Laporan mencakup akurasi QA, precision/recall abstain, tingkat klaim tak didukung, akurasi tiap jenis reasoning, deteksi kontradiksi, recall fakta generasi, perplexity decoder n-gram pada teks tahan (held-out), serta p50/p95 latensi inferensi.
+
+`crates/vark-eval/baselines/baseline_v0.json` adalah pengukuran tersimpan atas implementasi engine saat ini. `scripts/eval.sh` menjalankan keseluruhan korpus dan menolak penurunan metrik utama lebih dari 2 poin persentase; tingkat hallucination dan klaim generasi tak didukung tidak boleh meningkat. Jalankan `cargo run -p vark-eval` untuk JSON plus tabel, atau `cargo run -p vark-eval -- --json` untuk JSON saja. Baseline tidak mengasumsikan hasil sempurna: pada snapshot awal, akurasi QA 25%, transitive 0%, comparison 0%, rule 80%, long-sentence 40%, deteksi kontradiksi 0%, recall fakta generasi 0%, dan hallucination rate 84.82%. Ini mengukur keterbatasan kemampuan saat ini, bukan bukti bahwa sistem sudah memenuhi target produk. Hasil lama empat kasus tetap dicatat di laporan Tahap A sebagai baseline historis yang tidak sebanding langsung dengan korpus baru.
+
+Benchmark jaringan di CLI membangun CSR sparse dengan fan-in terukur, melakukan warm-up dan repetisi, lalu melaporkan median waktu langkah, jumlah edge, spikes, serta kapasitas buffer aktual.
 
 ## Artefak runtime
 

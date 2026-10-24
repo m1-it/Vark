@@ -1273,6 +1273,10 @@ dependencies = [
  "serde_json",
  "vark-api",
  "vark-config",
+ "vark-conversation",
+ "vark-decoder",
+ "vark-hashing",
+ "vark-memory",
 ]
 
 [[package]]

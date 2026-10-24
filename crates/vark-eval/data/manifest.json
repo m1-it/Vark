@@ -1,0 +1,22 @@
+{
+  "dataset_version": "vark-eval-2026-10-24-v1",
+  "license": "CC0-1.0, authored evaluation cases",
+  "record_counts": {
+    "qa_factual": 103,
+    "reasoning_transitive": 40,
+    "reasoning_compare": 30,
+    "reasoning_rules": 30,
+    "contradiction": 20,
+    "long_sentence": 30,
+    "generation": 30
+  },
+  "sha256": {
+    "qa_factual.jsonl": "129cca807d2ce736f0df10e81dbad79dad939a2e06641176270f1bc057e268b4",
+    "reasoning_transitive.jsonl": "9ffe4e8e6db1a66d0467f529160e417a5d8e4fba1d2722a619393d1b77dc10d1",
+    "reasoning_compare.jsonl": "e33b7f77b36506d38874040dd55655714d8e1cd8cfec2711cf43763b208e453c",
+    "reasoning_rules.jsonl": "46b3b5c95b4050e62873a25acd1523552fb26bf57027658ff5a0382b4bfb427c",
+    "contradiction.jsonl": "83cb636125a33ccce44db92dd3a5a92925d5d4985d63d7f192b1a14a7f6c3a1e",
+    "long_sentence.jsonl": "96d5619908b0ca2913e15ed5c74a8f96d8dc53ff960ec74d87b7dfe683261826",
+    "generation.jsonl": "89964f0eabdc23bb1b95aa7878368f84e4d212a30853ff0bd66edffc251f2f94"
+  }
+}
