@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs,
-    path::PathBuf,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -104,14 +102,7 @@ impl OpenAiCompatible {
             req = req.bearer_auth(k);
         }
         let response: ChatResponse = req.send().await?.error_for_status()?.json().await?;
-        let content = response
-            .choices
-            .first()
-            .ok_or(LlmError::InvalidResponse)?
-            .message
-            .content
-            .clone();
-        Ok(serde_json::from_str(&content)?)
+        parse_chat_response(response)
     }
 }
 impl LanguageModel for OpenAiCompatible {
@@ -136,14 +127,7 @@ impl LanguageModel for OpenAiCompatible {
             req = req.bearer_auth(k)
         }
         let response: ChatResponse = req.send()?.error_for_status()?.json()?;
-        let content = response
-            .choices
-            .first()
-            .ok_or(LlmError::InvalidResponse)?
-            .message
-            .content
-            .clone();
-        Ok(serde_json::from_str(&content)?)
+        parse_chat_response(response)
     }
 }
 
@@ -157,6 +141,17 @@ impl OpenAiCompatible {
             api_key: std::env::var(&c.api_key_env).ok(),
         }
     }
+}
+
+fn parse_chat_response(response: ChatResponse) -> Result<StructuredReply, LlmError> {
+    let content = response
+        .choices
+        .first()
+        .ok_or(LlmError::InvalidResponse)?
+        .message
+        .content
+        .as_str();
+    Ok(serde_json::from_str(content)?)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -175,9 +170,7 @@ pub struct TeacherStudentRouter {
     student_cfg: Option<vark_config::LlmBackendConfig>,
     teacher_cfg: Option<vark_config::LlmBackendConfig>,
     cache: Arc<Mutex<HashMap<String, StructuredReply>>>,
-    cache_path: PathBuf,
     usage: Arc<Mutex<UsageStats>>,
-    usage_path: PathBuf,
     daily_limit: u64,
 }
 impl TeacherStudentRouter {
@@ -187,26 +180,11 @@ impl TeacherStudentRouter {
             teacher: c.teacher.as_ref().map(OpenAiCompatible::from_backend),
             student_cfg: c.student.clone(),
             teacher_cfg: c.teacher.clone(),
-            cache: Arc::new(Mutex::new(
-                fs::read(format!("{}.llm-cache.json", c.memory_db))
-                    .ok()
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<HashMap<String, StructuredReply>>(&bytes).ok()
-                    })
-                    .unwrap_or_default(),
-            )),
-            cache_path: PathBuf::from(format!("{}.llm-cache.json", c.memory_db)),
-            usage: Arc::new(Mutex::new(
-                fs::read(format!("{}.llm-usage.json", c.memory_db))
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice::<UsageStats>(&bytes).ok())
-                    .filter(|stats| stats.day == current_day())
-                    .unwrap_or(UsageStats {
-                        day: current_day(),
-                        ..UsageStats::default()
-                    }),
-            )),
-            usage_path: PathBuf::from(format!("{}.llm-usage.json", c.memory_db)),
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            usage: Arc::new(Mutex::new(UsageStats {
+                day: current_day(),
+                ..UsageStats::default()
+            })),
             daily_limit: c.daily_token_limit,
         }
     }
@@ -239,7 +217,7 @@ impl TeacherStudentRouter {
         request: &LlmRequest,
     ) -> Result<StructuredReply, LlmError> {
         let backend = backend.ok_or(LlmError::NotConfigured)?;
-        let key = format!("{}:{}:{}", role, request.system, request.user);
+        let key = cache_key(role, request);
         if let Ok(cache) = self.cache.lock() {
             if let Some(reply) = cache.get(&key) {
                 return Ok(reply.clone());
@@ -265,9 +243,6 @@ impl TeacherStudentRouter {
                     let tokens = estimated + reply.answer.len() as u64 / 4;
                     if let Ok(mut cache) = self.cache.lock() {
                         cache.insert(key.clone(), reply.clone());
-                        if let Ok(bytes) = serde_json::to_vec(&*cache) {
-                            let _ = fs::write(&self.cache_path, bytes);
-                        }
                     }
                     if let Ok(mut usage) = self.usage.lock() {
                         if role == "teacher" {
@@ -280,9 +255,6 @@ impl TeacherStudentRouter {
                         usage.estimated_cost += cfg.map(|x| x.cost_per_1k_tokens).unwrap_or(0.0)
                             * tokens as f64
                             / 1000.0;
-                        if let Ok(bytes) = serde_json::to_vec_pretty(&*usage) {
-                            let _ = fs::write(&self.usage_path, bytes);
-                        }
                     }
                     return Ok(reply);
                 }
@@ -297,4 +269,53 @@ fn current_day() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() / 86_400)
         .unwrap_or(0)
+}
+
+fn cache_key(role: &str, request: &LlmRequest) -> String {
+    vark_hashing::sha256_hex(format!("{role}\0{}\0{}", request.system, request.user).as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_response_parser_requires_choice_and_complete_reply() {
+        let response: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"{\"intent\":\"answer\",\"entities\":[\"Rust\"],\"claims\":[\"Rust adalah bahasa sistem\"],\"is_question\":false,\"answer\":\"Rust adalah bahasa sistem\"}"}}]}"#,
+        )
+        .unwrap();
+        let parsed = parse_chat_response(response).unwrap();
+        assert_eq!(parsed.intent, "answer");
+        assert_eq!(parsed.claims.len(), 1);
+        assert_eq!(parsed.answer, "Rust adalah bahasa sistem");
+
+        let empty: ChatResponse = serde_json::from_str(r#"{"choices":[]}"#).unwrap();
+        assert!(matches!(
+            parse_chat_response(empty),
+            Err(LlmError::InvalidResponse)
+        ));
+
+        let incomplete: ChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"{\"answer\":\"jawaban\"}"}}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            parse_chat_response(incomplete),
+            Err(LlmError::Json(_))
+        ));
+    }
+
+    #[test]
+    fn cache_key_is_stable_role_scoped_and_does_not_expose_prompt() {
+        let request = LlmRequest {
+            system: "jangan simpan prompt ini".into(),
+            user: "secret content".into(),
+        };
+        let student_key = cache_key("student", &request);
+        assert_eq!(student_key, cache_key("student", &request));
+        assert_ne!(student_key, cache_key("teacher", &request));
+        assert!(!student_key.contains("secret content"));
+        assert_eq!(student_key.len(), 64);
+    }
 }

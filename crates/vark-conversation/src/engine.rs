@@ -111,67 +111,66 @@ impl Conversation {
         }
         Ok(changed)
     }
-    pub fn new(memory: EpisodicMemory, vocab: usize) -> Self {
+    pub fn new(memory: EpisodicMemory, vocab: usize) -> Result<Self, ConversationError> {
         let mut facts = HashMap::new();
         let mut graph = KnowledgeGraph::new();
-        if let Ok(records) = memory.load_records() {
-            for r in records
-                .into_iter()
-                .filter(|r| r.kind == MemoryKind::Fact && !r.text.starts_with("Pengguna:"))
-            {
-                for raw in r.text.split(['.', '!', '?', '\n']) {
-                    let n = raw.trim().to_lowercase();
-                    let tok = Tokenizer::new(vocab)
-                        .tokenize(&n)
-                        .into_iter()
-                        .map(|x| x.text)
-                        .filter(|x| x.len() > 2)
-                        .collect::<Vec<_>>();
-                    if !tok.is_empty() {
-                        facts.insert(
-                            key_for(&tok),
-                            Sentence {
-                                text: raw.trim().into(),
-                                tokens: tok,
-                                source: if r.source.is_empty() {
-                                    "memori dipulihkan".into()
-                                } else {
-                                    r.source.clone()
-                                },
-                                confidence: r.salience,
-                                status: match r.source.as_str() {
-                                    "confirm" => FactStatus::Confirmed,
-                                    "koreksi pengguna" => FactStatus::Confirmed,
-                                    "rebut" => FactStatus::Refuted,
-                                    "retract" => FactStatus::Retracted,
-                                    "tentative" | "guru tentative" => FactStatus::Tentative,
-                                    _ => FactStatus::Claimed,
-                                },
-                                confirmations: if r.source == "confirm" { 1 } else { 0 },
-                                supersedes: None,
-                                id: r.fact_id,
-                                parent_id: r.parent_id,
-                                node_kind: r.node_kind.clone(),
+        let records = memory.load_records()?;
+        for r in records
+            .into_iter()
+            .filter(|r| r.kind == MemoryKind::Fact && !r.text.starts_with("Pengguna:"))
+        {
+            for raw in r.text.split(['.', '!', '?', '\n']) {
+                let n = raw.trim().to_lowercase();
+                let tok = Tokenizer::new(vocab)
+                    .tokenize(&n)
+                    .into_iter()
+                    .map(|x| x.text)
+                    .filter(|x| x.len() > 2)
+                    .collect::<Vec<_>>();
+                if !tok.is_empty() {
+                    facts.insert(
+                        key_for(&tok),
+                        Sentence {
+                            text: raw.trim().into(),
+                            tokens: tok,
+                            source: if r.source.is_empty() {
+                                "memori dipulihkan".into()
+                            } else {
+                                r.source.clone()
                             },
-                        );
-                        for relation in extract_relations(raw, &r.source) {
-                            if matches!(r.source.as_str(), "rebut" | "retract") {
-                                graph.relations.retain(|stored| stored != &relation);
-                            } else if r.source == "koreksi pengguna" {
-                                graph.replace_conflicts(relation);
-                            } else if !(ContradictionChecker {
-                                graph: graph.clone(),
-                            })
-                            .check(&relation)
-                            {
-                                graph.insert(relation);
-                            }
+                            confidence: r.salience,
+                            status: match r.source.as_str() {
+                                "confirm" => FactStatus::Confirmed,
+                                "koreksi pengguna" => FactStatus::Confirmed,
+                                "rebut" => FactStatus::Refuted,
+                                "retract" => FactStatus::Retracted,
+                                "tentative" | "guru tentative" => FactStatus::Tentative,
+                                _ => FactStatus::Claimed,
+                            },
+                            confirmations: if r.source == "confirm" { 1 } else { 0 },
+                            supersedes: None,
+                            id: r.fact_id,
+                            parent_id: r.parent_id,
+                            node_kind: r.node_kind.clone(),
+                        },
+                    );
+                    for relation in extract_relations(raw, &r.source) {
+                        if matches!(r.source.as_str(), "rebut" | "retract") {
+                            graph.relations.retain(|stored| stored != &relation);
+                        } else if r.source == "koreksi pengguna" {
+                            graph.replace_conflicts(relation);
+                        } else if !(ContradictionChecker {
+                            graph: graph.clone(),
+                        })
+                        .check(&relation)
+                        {
+                            graph.insert(relation);
                         }
                     }
                 }
             }
         }
-        Self {
+        Ok(Self {
             memory,
             tokenizer: Tokenizer::new(vocab),
             network: LifNetwork::new(vocab, 1.0, 20.0, 2),
@@ -192,10 +191,13 @@ impl Conversation {
             unigram: UnigramModel::train(&[], vocab, 1),
             decoder: NgramDecoder::train(&[], 3),
             checkpoint_dir: "checkpoints".into(),
-        }
+        })
     }
-    pub fn from_config(memory: EpisodicMemory, config: &VarkConfig) -> Self {
-        let mut conversation = Self::new(memory, config.vocab_size);
+    pub fn from_config(
+        memory: EpisodicMemory,
+        config: &VarkConfig,
+    ) -> Result<Self, ConversationError> {
+        let mut conversation = Self::new(memory, config.vocab_size)?;
         conversation.network = LifNetwork::new(
             config.neuron_count,
             config.threshold,
@@ -224,17 +226,21 @@ impl Conversation {
         conversation.router = Some(TeacherStudentRouter::from_config(config));
         conversation.user_id = config.user_id.clone();
         conversation.teacher_confidence_threshold = config.teacher_confidence_threshold;
-        conversation.conversation_log =
-            ConversationLog::open(format!("{}.conversation.jsonl", config.memory_db)).ok();
-        if let Ok(records) = conversation.memory.load_records() {
-            let texts = records.iter().map(|r| r.text.clone()).collect::<Vec<_>>();
-            if !texts.is_empty() {
-                conversation.bpe = BpeModel::train(&texts, config.vocab_size);
-                conversation.unigram = UnigramModel::train(&texts, config.vocab_size, 2);
-                conversation.decoder = NgramDecoder::train(&texts, 3);
-            }
+        conversation.conversation_log = Some(ConversationLog::open(format!(
+            "{}.conversation.jsonl",
+            config.memory_db
+        ))?);
+        let records = conversation.memory.load_records()?;
+        let texts = records
+            .iter()
+            .map(|record| record.text.clone())
+            .collect::<Vec<_>>();
+        if !texts.is_empty() {
+            conversation.bpe = BpeModel::train(&texts, config.vocab_size);
+            conversation.unigram = UnigramModel::train(&texts, config.vocab_size, 2);
+            conversation.decoder = NgramDecoder::train(&texts, 3);
         }
-        conversation
+        Ok(conversation)
     }
     pub fn with_max_turns(mut self, n: usize) -> Self {
         self.max_turns = n.max(1);

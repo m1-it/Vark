@@ -12,7 +12,7 @@ pub(crate) fn normalize(s: &str) -> String {
         .collect()
 }
 pub(crate) fn split_sentences(s: &str) -> Vec<String> {
-    s.split(|c| matches!(c, '.' | '!' | '?' | '\n'))
+    s.split(['.', '!', '?', '\n'])
         .map(str::trim)
         .filter(|x| !x.is_empty())
         .map(String::from)

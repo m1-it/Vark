@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashSet},
     fs,
     io::{BufRead, BufReader},
     path::Path,
@@ -20,39 +20,67 @@ pub struct BpeModel {
 }
 impl BpeModel {
     pub fn train(texts: &[String], vocab_limit: usize) -> Self {
-        let mut vocab = HashMap::<String, usize>::new();
-        for t in texts {
-            for w in t.to_lowercase().split_whitespace() {
-                for c in w.chars() {
-                    *vocab.entry(c.to_string()).or_default() += 1
-                }
-            }
-        }
-        let mut symbols = vocab.keys().cloned().collect::<Vec<_>>();
+        let mut words = texts
+            .iter()
+            .flat_map(|text| {
+                text.to_lowercase()
+                    .split_whitespace()
+                    .map(|word| word.chars().map(|ch| ch.to_string()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut symbols = words
+            .iter()
+            .flatten()
+            .cloned()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         symbols.sort();
+        let mut symbol_set = symbols.iter().cloned().collect::<HashSet<_>>();
         let mut merges = Vec::new();
         while symbols.len() < vocab_limit {
-            let mut pairs = HashMap::<(String, String), usize>::new();
-            for t in texts {
-                let chars = t
-                    .to_lowercase()
-                    .split_whitespace()
-                    .flat_map(|w| w.chars().map(|c| c.to_string()))
-                    .collect::<Vec<_>>();
-                for p in chars.windows(2) {
-                    *pairs.entry((p[0].clone(), p[1].clone())).or_default() += 1
+            let mut pairs = BTreeMap::<(String, String), usize>::new();
+            for word in &words {
+                for pair in word.windows(2) {
+                    *pairs.entry((pair[0].clone(), pair[1].clone())).or_default() += 1;
                 }
             }
-            if let Some((pair, _)) = pairs.into_iter().max_by_key(|(_, n)| *n) {
-                let merged = format!("{}{}", pair.0, pair.1);
-                if symbols.contains(&merged) {
-                    break;
+            let Some((pair, _)) = pairs
+                .into_iter()
+                .filter(|((left, right), _)| !symbol_set.contains(&format!("{left}{right}")))
+                .max_by(|(left_pair, left_count), (right_pair, right_count)| {
+                    left_count
+                        .cmp(right_count)
+                        .then_with(|| right_pair.cmp(left_pair))
+                })
+            else {
+                break;
+            };
+            let merged = format!("{}{}", pair.0, pair.1);
+            let mut merge_count = 0;
+            for word in &mut words {
+                let mut next = Vec::with_capacity(word.len());
+                let mut index = 0;
+                while index < word.len() {
+                    if index + 1 < word.len() && word[index] == pair.0 && word[index + 1] == pair.1
+                    {
+                        next.push(merged.clone());
+                        index += 2;
+                        merge_count += 1;
+                    } else {
+                        next.push(word[index].clone());
+                        index += 1;
+                    }
                 }
-                symbols.push(merged);
-                merges.push(pair)
-            } else {
+                *word = next;
+            }
+            if merge_count == 0 {
                 break;
             }
+            symbol_set.insert(merged.clone());
+            symbols.push(merged);
+            merges.push(pair);
         }
         Self {
             vocab: symbols,
@@ -120,4 +148,37 @@ pub fn load_balanced(
     let mut out = id.into_iter().take(take_id).collect::<Vec<_>>();
     out.extend(en.into_iter().take(take_en));
     Ok(out)
+}
+
+#[cfg(test)]
+mod bpe_training_tests {
+    use super::*;
+
+    #[test]
+    fn training_applies_multiple_merges_to_each_word() {
+        let model = BpeModel::train(&["abab abab".into()], 4);
+        assert_eq!(
+            model.merges,
+            vec![("a".into(), "b".into()), ("ab".into(), "ab".into())]
+        );
+        assert_eq!(
+            model.encode("abab"),
+            vec!["abab".to_owned(), " ".to_owned()]
+        );
+    }
+
+    #[test]
+    fn training_does_not_merge_across_word_boundaries() {
+        let model = BpeModel::train(&["a b".into()], 8);
+        assert!(model.merges.is_empty());
+        assert_eq!(
+            model.encode("a b"),
+            vec![
+                "a".to_owned(),
+                " ".to_owned(),
+                "b".to_owned(),
+                " ".to_owned()
+            ]
+        );
+    }
 }

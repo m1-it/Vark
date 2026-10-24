@@ -3,10 +3,10 @@ use crate::{
     language::{content_tokens, is_question, normalize},
     types::{Answer, ConversationError, FactStatus, Sentence, Turn},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use vark_learning::StdpConfig;
 use vark_llm::{LanguageModel, LlmRequest};
-use vark_memory::semantic::extract_relations;
+use vark_memory::semantic::{extract_relations, KnowledgeGraph};
 use vark_memory::MemoryKind;
 const UNKNOWN:&str="Saya belum memiliki bukti yang cukup untuk menjawabnya dengan andal. Mohon berikan sumber, konteks, atau koreksi yang dapat saya pelajari.";
 impl Conversation {
@@ -59,11 +59,10 @@ impl Conversation {
         let plan = vark_reasoning::Planner::new(&self.memory)
             .plan(trimmed)
             .unwrap_or_default();
-        let cases = self
-            .conversation_log
-            .as_ref()
-            .and_then(|log| log.similar_cases(trimmed, 2).ok())
-            .unwrap_or_default();
+        let cases = match self.conversation_log.as_ref() {
+            Some(log) => log.similar_cases(&self.user_id, trimmed, 2)?,
+            None => Vec::new(),
+        };
         let request = LlmRequest { system: "Anda adalah model murid sebagai penyusun draf. Pahami pertanyaan dan buat draf jawaban Indonesia. Keluarkan klaim atomik. Jangan menganggap draf sebagai fakta.".into(), user: format!("Pertanyaan: {}\nLangkah planner: {:?}\nKasus lama yang berhasil: {:?}", safe_input, plan, cases.iter().map(|c| sanitize_external(&c.text)).collect::<Vec<_>>()) };
         let draft = match if let Some(router) = &self.router {
             router.call_student(&request).await
@@ -75,30 +74,20 @@ impl Conversation {
             Ok(reply) => reply,
             Err(_) => return self.respond(input),
         };
-        let mut contradiction = false;
-        let mut supported = true;
-        for claim in &draft.claims {
-            for relation in extract_relations(claim, "qwen-draft") {
-                if !self
-                    .graph
-                    .query(
-                        Some(&relation.subject),
-                        Some(&relation.predicate),
-                        Some(&relation.object),
-                        Some(relation.polarity),
-                    )
-                    .is_empty()
-                {
-                    continue;
-                }
-                supported = false;
-                if !self.graph.conflicts_for(&relation).is_empty() {
-                    contradiction = true;
-                }
-            }
-        }
+        let (claim_evidence, contradiction) =
+            verified_claim_evidence(&self.graph, &self.facts, &draft.claims);
         let q = content_tokens(&self.tokenizer, &normalize(trimmed));
         let selected = self.candidates(&q).into_iter().take(3).collect::<Vec<_>>();
+        let selected_texts = selected
+            .iter()
+            .map(|sentence| sentence.text.as_str())
+            .collect::<HashSet<_>>();
+        let evidence = claim_evidence
+            .iter()
+            .filter(|sentence| selected_texts.contains(sentence.text.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let supported = !claim_evidence.is_empty() && evidence.len() == claim_evidence.len();
         let mut teacher_answer = None;
         let student_confidence = if contradiction {
             0.3
@@ -148,36 +137,37 @@ impl Conversation {
         } else {
             "murid".into()
         };
-        let draft_text = teacher_answer
-            .as_ref()
-            .map(|t| t.answer.clone())
-            .unwrap_or_else(|| draft.answer.clone());
-        let (text, evidence, grounded, reasoning) = if contradiction && !selected.is_empty() {
+        let (text, evidence, grounded, reasoning) = if contradiction {
             (
-                selected
+                UNKNOWN.to_owned(),
+                vec![],
+                false,
+                vec!["Klaim draf berkonflik dengan graph; VARK abstain.".into()],
+            )
+        } else if supported {
+            (
+                evidence
                     .iter()
-                    .map(|s| s.text.clone())
+                    .map(|sentence| sentence.text.clone())
                     .collect::<Vec<_>>()
                     .join(" "),
-                selected.clone(),
+                evidence,
                 true,
-                vec![
-                    "Draf Qwen bertentangan dengan fakta terkonfirmasi; VARK memperbaiki jawaban."
-                        .into(),
-                ],
+                vec![if teacher_disagreed {
+                    "Draf diverifikasi terhadap graph; fakta tersimpan menjadi jawaban.".into()
+                } else {
+                    "Setiap klaim draf cocok dengan graph; jawaban memakai fakta tersimpan.".into()
+                }],
             )
         } else {
             (
-                draft_text,
-                selected,
-                supported,
+                UNKNOWN.to_owned(),
+                vec![],
+                false,
                 vec![if teacher_disagreed {
-                    "Guru meninjau draf murid; perbedaan dicatat sebagai pembelajaran Tentatif."
-                        .into()
-                } else if supported {
-                    "Klaim draf cocok dengan graph.".into()
+                    "Jawaban guru/murid belum terverifikasi terhadap graph; VARK abstain.".into()
                 } else {
-                    "Jawaban Qwen belum diverifikasi; tidak disimpan sebagai fakta.".into()
+                    "Klaim kosong atau tidak didukung; VARK abstain.".into()
                 }],
             )
         };
@@ -361,7 +351,7 @@ impl Conversation {
             if let Ok(reply) = model.complete(&request) {
                 let evidence_words = evidence
                     .split_whitespace()
-                    .map(|w| normalize(w))
+                    .map(normalize)
                     .collect::<Vec<_>>();
                 let claims_grounded = reply.claims.iter().all(|claim| {
                     let words = normalize(claim)
@@ -478,6 +468,71 @@ impl Conversation {
         Ok(())
     }
 }
+fn verify_claims(graph: &KnowledgeGraph, claims: &[String]) -> (bool, bool) {
+    if claims.is_empty() {
+        return (false, false);
+    }
+    let mut contradiction = false;
+    for claim in claims {
+        let relations = extract_relations(claim, "draft");
+        if relations.is_empty() {
+            return (false, contradiction);
+        }
+        for relation in relations {
+            if graph
+                .query(
+                    Some(&relation.subject),
+                    Some(&relation.predicate),
+                    Some(&relation.object),
+                    Some(relation.polarity),
+                )
+                .is_empty()
+            {
+                contradiction |= !graph.conflicts_for(&relation).is_empty();
+                return (false, contradiction);
+            }
+        }
+    }
+    (true, contradiction)
+}
+
+fn verified_claim_evidence(
+    graph: &KnowledgeGraph,
+    facts: &HashMap<String, Sentence>,
+    claims: &[String],
+) -> (Vec<Sentence>, bool) {
+    let (claims_supported, contradiction) = verify_claims(graph, claims);
+    if !claims_supported {
+        return (Vec::new(), contradiction);
+    }
+    let mut evidence = Vec::new();
+    for claim in claims {
+        for relation in extract_relations(claim, "draft") {
+            let source = facts.values().find(|sentence| {
+                !matches!(sentence.status, FactStatus::Refuted | FactStatus::Retracted)
+                    && extract_relations(&sentence.text, &sentence.source)
+                        .iter()
+                        .any(|stored| {
+                            stored.subject == relation.subject
+                                && stored.predicate == relation.predicate
+                                && stored.object == relation.object
+                                && stored.polarity == relation.polarity
+                        })
+            });
+            let Some(source) = source else {
+                return (Vec::new(), false);
+            };
+            if !evidence
+                .iter()
+                .any(|saved: &Sentence| saved.text == source.text)
+            {
+                evidence.push(source.clone());
+            }
+        }
+    }
+    (evidence, false)
+}
+
 fn answer(t: &str, c: f32, g: bool, e: Vec<Sentence>, r: Vec<String>, s: usize) -> Answer {
     Answer {
         text: t.into(),
@@ -494,23 +549,74 @@ fn concept_hash(text: &str) -> u64 {
     })
 }
 fn sanitize_external(input: &str) -> String {
-    input
-        .split_whitespace()
-        .map(|word| {
-            let lower = word.to_ascii_lowercase();
-            if word.contains('@') {
-                "[EMAIL]".into()
-            } else if word.chars().filter(|c| c.is_ascii_digit()).count() >= 7 {
-                "[NUMBER]".into()
-            } else if lower.contains("api_key")
-                || lower.contains("bearer")
-                || lower.contains("token=")
-            {
-                "[SECRET]".into()
-            } else {
-                word.into()
-            }
-        })
-        .collect::<Vec<String>>()
-        .join(" ")
+    vark_memory::redact_sensitive_text(input)
+}
+
+#[cfg(test)]
+mod claim_verification_tests {
+    use super::*;
+
+    #[test]
+    fn empty_unparseable_and_unsupported_claims_do_not_pass() {
+        let mut graph = KnowledgeGraph::new();
+        for relation in extract_relations("Rust adalah bahasa pemrograman", "fakta") {
+            graph.insert(relation);
+        }
+
+        assert_eq!(verify_claims(&graph, &[]), (false, false));
+        assert_eq!(
+            verify_claims(&graph, &["jawaban tanpa relasi".into()]),
+            (false, false)
+        );
+        assert_eq!(
+            verify_claims(&graph, &["Python adalah bahasa pemrograman".into()]),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn every_claim_must_match_an_existing_relation() {
+        let mut graph = KnowledgeGraph::new();
+        for relation in extract_relations("Rust adalah bahasa pemrograman", "fakta") {
+            graph.insert(relation);
+        }
+        assert_eq!(
+            verify_claims(&graph, &["Rust adalah bahasa pemrograman".into()]),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn grounded_evidence_must_come_from_a_matching_active_fact() {
+        let mut graph = KnowledgeGraph::new();
+        let text = "Rust adalah bahasa pemrograman";
+        for relation in extract_relations(text, "koreksi pengguna") {
+            graph.insert(relation);
+        }
+        let sentence = Sentence {
+            text: text.into(),
+            tokens: vec!["rust".into(), "bahasa".into(), "pemrograman".into()],
+            source: "koreksi pengguna".into(),
+            confidence: 1.0,
+            status: FactStatus::Confirmed,
+            confirmations: 1,
+            supersedes: None,
+            id: Some(1),
+            parent_id: None,
+            node_kind: Some("koreksi".into()),
+        };
+        let facts = HashMap::from([("rust".into(), sentence)]);
+        let (evidence, contradiction) =
+            verified_claim_evidence(&graph, &facts, &["Rust adalah bahasa pemrograman".into()]);
+        assert!(!contradiction);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].text, text);
+        assert!(verified_claim_evidence(
+            &graph,
+            &HashMap::new(),
+            &["Rust adalah bahasa pemrograman".into()]
+        )
+        .0
+        .is_empty());
+    }
 }

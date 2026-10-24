@@ -2,15 +2,21 @@
 name = "vark-api"
 version.workspace = true
 edition.workspace = true
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 axum.workspace = true
 tokio.workspace = true
-vark-config={path="../vark-config"}
-vark-conversation={path="../vark-conversation"}
-vark-memory={path="../vark-memory"}
-vark-neurons={path="../vark-neurons"}
-vark-tokenizer={path="../vark-tokenizer"}
-vark-llm={path="../vark-llm"}
+vark-config = { path = "../vark-config" }
+vark-conversation = { path = "../vark-conversation" }
+vark-hashing = { path = "../vark-hashing" }
+vark-memory = { path = "../vark-memory" }
+vark-neurons = { path = "../vark-neurons" }
+vark-tokenizer = { path = "../vark-tokenizer" }
+vark-llm = { path = "../vark-llm" }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

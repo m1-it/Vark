@@ -77,6 +77,7 @@ impl StdpState {
                     (network.synapses.weights[k] + dw).clamp(cfg.min_weight, cfg.max_weight);
             }
         }
+        network.synapses.rebuild_outgoing();
     }
     pub fn apply_sequence(
         &mut self,
@@ -94,6 +95,7 @@ impl StdpState {
         for weight in &mut network.synapses.weights {
             *weight = (*weight + reward).clamp(-1.0, 1.0);
         }
+        network.synapses.rebuild_outgoing();
     }
 }
 pub fn apply_stdp(network: &mut LifNetwork, pre: &[bool], post: &[bool], cfg: &StdpConfig) {
@@ -103,5 +105,41 @@ pub fn apply_stdp(network: &mut LifNetwork, pre: &[bool], post: &[bool], cfg: &S
 pub fn homeostasis(network: &mut LifNetwork, target_rate: f32, observed: &[f32], rate: f32) {
     for (n, o) in network.neurons.iter_mut().zip(observed) {
         n.threshold = (n.threshold + (o - target_rate) * rate).clamp(0.05, 10.0)
+    }
+}
+
+#[cfg(test)]
+mod synapse_learning_tests {
+    use super::*;
+    use vark_neurons::LifNetwork;
+
+    #[test]
+    fn learned_weights_drive_propagation_after_checkpoint_reload() {
+        let mut network = LifNetwork::new(2, 1.0, 20.0, 0);
+        network.synapses.connect(1, 0, 0.2);
+        let mut state = StdpState::new(2);
+        let config = StdpConfig {
+            learning_rate: 0.5,
+            ..StdpConfig::default()
+        };
+        state.apply(&mut network, &[true, false], &[false, false], &config, 1.0);
+        state.apply(&mut network, &[false, false], &[false, true], &config, 1.0);
+        network.synapses.propagate(&[true, false]);
+        let after_stdp = network.synapses.take_current(1);
+        let expected_after_stdp = 0.2 + 0.5 * (-1.0_f32 / 20.0).exp();
+        assert!((after_stdp - expected_after_stdp).abs() < 1e-6);
+
+        state.reward(&mut network, 0.1);
+        network.synapses.propagate(&[true, false]);
+        let after_reward = network.synapses.take_current(1);
+        assert!((after_reward - (expected_after_stdp + 0.1)).abs() < 1e-6);
+
+        let path =
+            std::env::temp_dir().join(format!("vark-learned-weights-{}.json", std::process::id()));
+        network.save_atomic(&path).unwrap();
+        let mut restored = LifNetwork::load(&path).unwrap();
+        restored.synapses.propagate(&[true, false]);
+        assert!((restored.synapses.take_current(1) - after_reward).abs() < 1e-6);
+        std::fs::remove_file(path).unwrap();
     }
 }

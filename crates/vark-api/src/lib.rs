@@ -5,7 +5,9 @@ use vark_conversation::{Answer, Conversation};
 use vark_llm::UsageStats;
 use vark_memory::EpisodicMemory;
 use vark_tokenizer::Tokenizer;
+mod auth;
 pub mod server;
+pub use auth::{ApiAuth, ApiAuthError};
 #[derive(Debug, Deserialize)]
 pub struct InferenceRequest {
     pub text: String,
@@ -29,7 +31,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(config: VarkConfig) -> Result<Self> {
         let memory = EpisodicMemory::open(&config.memory_db)?;
-        let conversation = Conversation::from_config(memory, &config);
+        let conversation = Conversation::from_config(memory, &config)?;
         Ok(Self {
             tokenizer: Tokenizer::new(config.vocab_size),
             conversation,

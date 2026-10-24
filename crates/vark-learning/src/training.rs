@@ -39,8 +39,8 @@ impl Learner {
             .enumerate()
             .map(|(i, x)| 2.0 * err * x + penalty_grad.get(i).copied().unwrap_or(0.0))
             .collect::<Vec<_>>();
-        for i in 0..self.weights.len().min(gradients.len()) {
-            self.weights[i] -= self.learning_rate * gradients[i];
+        for (weight, gradient) in self.weights.iter_mut().zip(&gradients) {
+            *weight -= self.learning_rate * gradient;
         }
         self.replay.push(ReplayItem {
             input: input.to_vec(),
@@ -67,8 +67,8 @@ impl Learner {
     }
     fn train_step_without_replay(&mut self, input: &[f32], target: f32) {
         let err = self.predict(input) - target;
-        for i in 0..self.weights.len().min(input.len()) {
-            self.weights[i] -= self.learning_rate * 2.0 * err * input[i];
+        for (weight, value) in self.weights.iter_mut().zip(input) {
+            *weight -= self.learning_rate * 2.0 * err * value;
         }
     }
 }

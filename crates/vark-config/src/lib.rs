@@ -22,7 +22,7 @@ pub struct VarkConfig {
     pub llm_timeout_ms: u64,
     #[serde(default = "default_llm_temperature")]
     pub llm_temperature: f32,
-    #[serde(default)]
+    #[serde(default = "default_user_id")]
     pub user_id: String,
     #[serde(default)]
     pub teacher: Option<LlmBackendConfig>,
@@ -61,6 +61,9 @@ fn default_llm_timeout() -> u64 {
 }
 fn default_llm_temperature() -> f32 {
     0.15
+}
+fn default_user_id() -> String {
+    "local-user".into()
 }
 impl Default for VarkConfig {
     fn default() -> Self {
@@ -104,5 +107,49 @@ impl VarkConfig {
         }
         fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_json_receives_explicit_runtime_defaults() {
+        let mut value = serde_json::to_value(VarkConfig::default()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        for field in [
+            "user_id",
+            "teacher",
+            "student",
+            "daily_token_limit",
+            "teacher_confidence_threshold",
+            "llm_timeout_ms",
+            "llm_temperature",
+        ] {
+            object.remove(field);
+        }
+        let config: VarkConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.user_id, "local-user");
+        assert_eq!(config.daily_token_limit, 100_000);
+        assert_eq!(config.teacher_confidence_threshold, 0.65);
+        assert_eq!(config.llm_timeout_ms, 8_000);
+        assert_eq!(config.llm_temperature, 0.15);
+        assert!(config.teacher.is_none());
+        assert!(config.student.is_none());
+    }
+
+    #[test]
+    fn save_and_load_preserve_service_configuration() {
+        let path = std::env::temp_dir().join(format!("vark-config-{}.json", std::process::id()));
+        let config = VarkConfig::default();
+        config.save(&path).unwrap();
+        let loaded = VarkConfig::load(&path).unwrap();
+        assert_eq!(loaded.user_id, config.user_id);
+        assert_eq!(loaded.memory_db, config.memory_db);
+        assert_eq!(loaded.checkpoint_dir, config.checkpoint_dir);
+        assert_eq!(loaded.neuron_count, config.neuron_count);
+        assert_eq!(loaded.daily_token_limit, config.daily_token_limit);
+        fs::remove_file(path).unwrap();
     }
 }

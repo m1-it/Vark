@@ -41,9 +41,9 @@ impl CsrSynapses {
             }
         }
         self.row_ptr = vec![0; n + 1];
-        for i in 0..n {
-            rows[i].sort_unstable_by_key(|(s, _)| *s);
-            self.row_ptr[i + 1] = self.row_ptr[i] + rows[i].len();
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.sort_unstable_by_key(|(source, _)| *source);
+            self.row_ptr[index + 1] = self.row_ptr[index] + row.len();
         }
         self.col_idx = rows
             .iter()
@@ -95,10 +95,10 @@ impl CsrSynapses {
                 {
                     self.col_idx[weakest] = source;
                     self.weights[weakest] = amount;
-                    self.rebuild_outgoing();
                 }
             }
         }
+        self.rebuild_outgoing();
     }
     pub fn rebuild_outgoing(&mut self) {
         let n = self.neuron_count();
@@ -109,8 +109,8 @@ impl CsrSynapses {
             }
         }
         self.out_row_ptr = vec![0; n + 1];
-        for i in 0..n {
-            self.out_row_ptr[i + 1] = self.out_row_ptr[i] + edges[i].len()
+        for (index, outgoing) in edges.iter().enumerate() {
+            self.out_row_ptr[index + 1] = self.out_row_ptr[index] + outgoing.len()
         }
         self.out_col_idx = edges.iter().flat_map(|e| e.iter().map(|x| x.0)).collect();
         self.out_weights = edges.iter().flat_map(|e| e.iter().map(|x| x.1)).collect()

@@ -27,3 +27,50 @@ impl<'a> Planner<'a> {
         Ok(self.memory.search(q, 16)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planner_handles_empty_memory_conservatively() {
+        let path =
+            std::env::temp_dir().join(format!("vark-reasoning-empty-{}.jsonl", std::process::id()));
+        let memory = EpisodicMemory::open(&path).unwrap();
+        let planner = Planner::new(&memory);
+        let plan = planner.plan("Siapa presiden Mars?").unwrap();
+        assert!(plan
+            .iter()
+            .any(|step| step.contains("Tidak ada memori dekat")));
+        assert!(plan
+            .iter()
+            .any(|step| step.contains("Verifikasi konsistensi")));
+        assert!(planner.retrieve("Siapa presiden Mars?").unwrap().is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn planner_and_retriever_use_persisted_records() {
+        let path =
+            std::env::temp_dir().join(format!("vark-reasoning-fact-{}.jsonl", std::process::id()));
+        let mut memory = EpisodicMemory::open(&path).unwrap();
+        memory
+            .append("Rust adalah bahasa pemrograman sistem", 1.0)
+            .unwrap();
+        let planner = Planner::new(&memory);
+        let plan = planner
+            .plan("Rust adalah bahasa pemrograman sistem")
+            .unwrap();
+        assert!(plan
+            .iter()
+            .any(|step| step.contains("Bandingkan 1 memori relevan")));
+        assert_eq!(
+            planner
+                .retrieve("Rust adalah bahasa pemrograman sistem")
+                .unwrap()
+                .len(),
+            1
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+}

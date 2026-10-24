@@ -11,13 +11,13 @@ fn facts_survive_restart_and_network_checkpoint() {
     let memory_path = root.join("memory.jsonl");
     let checkpoint = root.join("network.json");
     {
-        let mut c = Conversation::new(EpisodicMemory::open(&memory_path).unwrap(), 64);
+        let mut c = Conversation::new(EpisodicMemory::open(&memory_path).unwrap(), 64).unwrap();
         c.respond("koreksi: VARK menyimpan fakta secara persisten.")
             .unwrap();
     }
-    let restored = Conversation::new(EpisodicMemory::open(&memory_path).unwrap(), 64);
+    let restored = Conversation::new(EpisodicMemory::open(&memory_path).unwrap(), 64).unwrap();
     let mut answer = restored;
-    assert!(answer.memory.load_records().unwrap().len() >= 1);
+    assert!(!answer.memory.load_records().unwrap().is_empty());
     let restored_answer = answer
         .respond("Apa VARK menyimpan fakta secara persisten?")
         .unwrap();

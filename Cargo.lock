@@ -1206,9 +1206,12 @@ dependencies = [
  "axum",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
+ "tower",
  "vark-config",
  "vark-conversation",
+ "vark-hashing",
  "vark-llm",
  "vark-memory",
  "vark-neurons",
@@ -1304,12 +1307,15 @@ dependencies = [
  "serde_json",
  "thiserror",
  "vark-config",
+ "vark-hashing",
 ]
 
 [[package]]
 name = "vark-memory"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "ring",
  "serde",
  "serde_json",
  "thiserror",

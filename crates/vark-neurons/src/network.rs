@@ -64,7 +64,7 @@ impl LifNetwork {
             return;
         }
         let mut state = seed | 1;
-        let requested = degree.max(10).min(50).min(n - 1);
+        let requested = degree.clamp(10, 50).min(n - 1);
         let mut edges = Vec::with_capacity(n * requested);
         for target in 0..n {
             let mut selected = Vec::with_capacity(requested);
@@ -169,9 +169,7 @@ impl LifNetwork {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut n: Self = serde_json::from_slice(&fs::read(path)?)?;
         n.synapses.pending = vec![0.0; n.neurons.len()];
-        if n.synapses.out_row_ptr.len() != n.neurons.len() + 1 {
-            n.synapses.rebuild_outgoing()
-        }
+        n.synapses.rebuild_outgoing();
         Ok(n)
     }
 }

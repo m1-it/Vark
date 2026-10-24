@@ -15,11 +15,15 @@ cargo run -p vark-eval
 
 Mode `--chat` menerima kalimat panjang per baris. Pertanyaan async mengaktifkan LIF, planner, BPE/Unigram, n-gram, lalu router murid dan guru sesuai confidence. Gunakan `koreksi:`, `salah, yang benar ...`, `benar`, `salah`, atau `lupakan itu` untuk pembelajaran terarah.
 
-Server membaca konfigurasi dari environment:
+Server membaca konfigurasi dari environment. API menolak startup jika bearer token atau kunci penyimpanan tidak tersedia. Bind default hanya ke loopback:
 
 ```bash
+export VARK_API_TOKEN="$(openssl rand -hex 32)"
+export VARK_STORAGE_KEY="$(openssl rand -base64 48)"
 VARK_CONFIG=config.json cargo run -p vark-api --bin server
 ```
+
+Untuk banyak pengguna, gunakan `VARK_API_TOKENS` sebagai JSON object token-ke-user-id dan jangan set `VARK_API_TOKEN` bersamaan. Request memakai `Authorization: Bearer <token>`; `user_id` di body opsional, dan jika dikirim harus sama dengan identitas yang terikat ke token. Override bind hanya dengan `VARK_API_BIND`; endpoint publik harus ditempatkan di belakang TLS reverse proxy. Batas default API adalah 60 request per menit per user, 128 engine aktif, body 64 KiB, dan teks 16 KiB. Jangan commit token atau `VARK_STORAGE_KEY`; kehilangan key membuat record terenkripsi tidak dapat dipulihkan.
 
 ## Struktur
 
@@ -64,7 +68,7 @@ Konfigurasi menggunakan dua slot terpisah:
 }
 ```
 
-Kunci guru hanya dibaca dari environment guru dan kunci murid hanya dari environment murid. Fallback legacy hanya memakai `VARK_LEGACY_LLM_API_KEY`. Router menyediakan cache persisten per role+prompt, retry terbatas, token usage, estimasi biaya, daily budget, dan statistik jumlah panggilan. Rasio panggilan guru adalah ukuran kemajuan yang dicetak evaluator.
+Kunci guru hanya dibaca dari environment guru dan kunci murid hanya dari environment murid. Fallback legacy hanya memakai `VARK_LEGACY_LLM_API_KEY`. Cache respons hanya hidup di memori proses dan menggunakan hash prompt sebagai key; prompt, jawaban cache, dan usage statistics tidak disimpan ke file. Router juga menyediakan retry terbatas, token usage, estimasi biaya, daily budget, dan statistik jumlah panggilan.
 
 Jawaban guru diberi status `Tentative`, klaimnya masuk sebagai fakta Tentative, dan tidak langsung menjadi `Confirmed`. Bila jawaban murid dan guru berbeda secara relasi klaim, perbedaannya dicatat dalam reasoning trace.
 
@@ -76,7 +80,7 @@ File `<memory_db>.conversation.jsonl` menyimpan record append-only dengan schema
 turn_id, user_id, role, text, timestamp, feedback, schema_version
 ```
 
-Role yang digunakan adalah `user`, `murid`, `guru`, `feedback`, dan `reasoning`. Email, nomor telepon, token panjang, `api_key`, dan bearer secret disamarkan sebelum ditulis. Pertanyaan dan fakta juga disamarkan sebelum dikirim ke backend eksternal. `ConversationLog::compact` dan `ConversationLog::backup` tersedia untuk rotasi dan cadangan.
+Role yang digunakan adalah `user`, `murid`, `guru`, `feedback`, dan `reasoning`. Email, nomor telepon, token panjang, `api_key`, password, dan bearer secret disamarkan sebelum ditulis. Pertanyaan dan fakta juga disamarkan sebelum dikirim ke backend eksternal. Di Unix, direktori data dibuat owner-only (`0700`) dan file owner-only (`0600`). Jika `VARK_STORAGE_KEY` tersedia, setiap record JSONL dienkripsi dan diautentikasi dengan AES-256-GCM; file legacy dimigrasikan saat dibuka. Lock file per dataset menyerialkan append, compact, backup, dan read-modify-write lintas proses. Baris JSON/checksum/AEAD yang rusak menyebabkan error eksplisit dan tidak diabaikan atau ditimpa. Log percakapan dipertahankan selama 180 hari; record fakta tetap tersedia sampai dihapus eksplisit. `ConversationLog::compact` dan `ConversationLog::backup` tersedia untuk pengelolaan data.
 
 Reasoning trace terstruktur menyimpan pertanyaan, fakta yang dipakai, kesimpulan, dan feedback. Planner memecah langkah awal dan kasus reasoning serupa diambil dari log untuk konteks adaptasi pada pertanyaan berikutnya. Graph menyediakan relasi typed, negasi, konflik, dan reachability multi-hop. N-gram dipakai untuk perplexity, kelancaran, dan fallback; n-gram bukan mesin penalaran.
 
@@ -101,7 +105,7 @@ Kurikulum mencakup `apa itu`, `fungsi`, `mengapa`, `beda`, dan `contoh`. Batas p
 
 ## Isolasi user
 
-Server memakai engine terpisah per `user_id`, dengan memory database, checkpoint, graph, cache, statistik, dan conversation log terpisah. Endpoint request menerima `user_id` opsional. Tidak ada graph atau fakta lintas user pada server.
+Token memetakan ke satu `user_id` yang telah diotorisasi; klien tidak dapat memilih identitas lain. Nama folder disk diturunkan dari SHA-256 identitas agar perbedaan slash, titik, atau karakter lain tidak menimbulkan tabrakan path. Server memakai engine/lock terpisah per user, batas jumlah engine dan request, serta tidak menahan mutex global selama inferensi atau panggilan LLM.
 
 ## Evaluasi
 
@@ -118,4 +122,4 @@ Benchmark jaringan di CLI membangun CSR sparse dengan fan-in terukur, melakukan 
 
 ## Artefak runtime
 
-Memori utama berada di `data/memory.jsonl`, log percakapan di `data/memory.jsonl.conversation.jsonl`, cache/statistik LLM di file `.llm-cache.json` dan `.llm-usage.json`, serta checkpoint jaringan di `checkpoints/`. Semua artefak runtime tersebut diabaikan oleh `.gitignore` dan tidak masuk arsip rilis.
+Memori utama berada di `data/memory.jsonl`, log percakapan di `data/memory.jsonl.conversation.jsonl`, dan checkpoint jaringan di `checkpoints/`. Cache LLM dan statistik usage hanya berada di memori proses. Semua artefak runtime diabaikan oleh `.gitignore` dan tidak masuk arsip rilis.
