@@ -1,0 +1,16 @@
+[package]
+name = "vark-conversation"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+vark-memory = { path = "../vark-memory" }
+vark-tokenizer = { path = "../vark-tokenizer" }
+vark-neurons = { path = "../vark-neurons" }
+vark-learning = { path = "../vark-learning" }
+vark-config = { path = "../vark-config" }
+vark-llm = { path = "../vark-llm" }
+vark-decoder = { path = "../vark-decoder" }
+vark-reasoning = { path = "../vark-reasoning" }

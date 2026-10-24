@@ -1,0 +1,7 @@
+[package]
+name = "vark-learning"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+vark-neurons = { path = "../vark-neurons" }
+serde.workspace = true

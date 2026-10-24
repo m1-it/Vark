@@ -1,0 +1,10 @@
+[package]
+name = "vark-llm"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+vark-config = { path = "../vark-config" }

@@ -1,0 +1,7 @@
+[package]
+name = "vark-hashing"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+sha2.workspace = true
+hex.workspace = true

@@ -1,0 +1,8 @@
+[package]
+name = "vark-decoder"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+vark-tokenizer = { path = "../vark-tokenizer" }
+serde.workspace = true
+serde_json.workspace = true

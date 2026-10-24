@@ -1,0 +1,13 @@
+[package]
+name = "vark-cli"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+vark-api={path="../vark-api"}
+vark-config={path="../vark-config"}
+vark-conversation={path="../vark-conversation"}
+vark-memory={path="../vark-memory"}
+vark-neurons={path="../vark-neurons"}

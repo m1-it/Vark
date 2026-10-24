@@ -1,0 +1,7 @@
+[package]
+name = "vark-reasoning"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+vark-memory = { path = "../vark-memory" }
+thiserror.workspace = true

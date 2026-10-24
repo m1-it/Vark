@@ -1,0 +1,10 @@
+/target
+/data/*.jsonl
+/data/evaluation-latest.json
+/data/*.llm-*
+/checkpoints/*
+!.gitkeep
+**/checkpoints/*
+!**/checkpoints/.gitkeep
+**/*.llm-cache.json
+**/*.llm-usage.json

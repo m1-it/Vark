@@ -1,0 +1,9 @@
+[package]
+name = "vark-tokenizer"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+vark-hashing = { path = "../vark-hashing" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
