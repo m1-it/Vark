@@ -38,3 +38,27 @@
 - **Alasan:** kedua pengukuran tidak sebanding; menyebut keterbatasan ini mencegah kesimpulan menyesatkan. Tahap A hanya memperluas pengukuran, tidak mengubah algoritme Engine.
 
 Langkah setelah Tahap A: prioritaskan abstain/grounding dan perbaikan reasoning transitive/perbandingan, lalu pertahankan corpus dan baseline sebagai regression gate.
+
+
+## B — Pemrosesan bahasa dasar
+
+### B-1 — Batas kalimat dan token konten
+
+- **Konteks:** pemotongan period/desimal/singkatan merusak konteks, sedangkan ambang byte-length membuang token pendek dan negasi.
+- **Opsi:** regex tunggal, tokenizer per-token tanpa konteks, atau pemindai karakter Unicode dengan pengecualian yang diuji dan daftar stopword eksplisit.
+- **Pilihan:** pemindai batas kalimat yang mempertahankan delimiter penutup dan memeriksa konteks token (desimal, inisial, singkatan, URL/email), serta content tokenizer yang hanya membuang stopword terdaftar.
+- **Alasan:** perilaku dapat diprediksi untuk bahasa Indonesia/Inggris, tetap menjaga teks sumber, dan tidak menyaring token bermakna berdasarkan panjang bytes.
+
+### B-2 — Ekstraksi relasi tanpa fallback generik
+
+- **Konteks:** satu pivot per kalimat menghasilkan relasi palsu, tetapi nol relasi untuk predicate yang belum didukung lebih aman daripada relasi tebakan.
+- **Opsi:** pertahankan `related_to` fallback untuk semua kata kerja, batasi parser ke pola eksplisit, atau menambah model/dependency NLP.
+- **Pilihan:** pola bilingual eksplisit dan `Vec<Relation>`; buat relasi if-then hanya ketika kondisi dan konsekuen dinyatakan langsung, dan jangan menciptakan `related_to` untuk kalimat ambigu.
+- **Alasan:** ekstraksi dapat diaudit serta abstain pada pola yang tidak dikenal; perluasan predicate dilakukan melalui kata kerja teruji, bukan tebakan fallback. Koma/konjungsi hanya memisahkan dua klausa jika kedua sisi memiliki predicate yang teridentifikasi, sehingga koordinasi pada objek dipertahankan.
+
+### B-3 — Identitas, cakupan, dan kompatibilitas graph
+
+- **Konteks:** alias perlu mengacu pada satu entitas dan field atribut/kuantifier baru tidak boleh merusak serialisasi lama.
+- **Opsi:** menduplikasi node untuk tiap alias, menyimpan alias di luar entity, atau menyimpan alias langsung pada `Entity` dan meresolusikannya ke ID kanonik.
+- **Pilihan:** `Entity.aliases`, normalisasi ID/label/alias, `Quantifier::{All,Some,None}`, dan `#[serde(default)]` untuk alias serta field relasi baru.
+- **Alasan:** record lama tetap dapat dibaca, query/insert melalui alias kembali pada identitas stabil, dan negasi kuantitatif tidak dilebur menjadi boolean saja.

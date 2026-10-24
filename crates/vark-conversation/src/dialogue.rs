@@ -76,7 +76,7 @@ impl Conversation {
         };
         let (claim_evidence, contradiction) =
             verified_claim_evidence(&self.graph, &self.facts, &draft.claims);
-        let q = content_tokens(&self.tokenizer, &normalize(trimmed));
+        let q = content_tokens(&self.tokenizer, trimmed);
         let selected = self.candidates(&q).into_iter().take(3).collect::<Vec<_>>();
         let selected_texts = selected
             .iter()
@@ -305,7 +305,7 @@ impl Conversation {
                 spike_count,
             ));
         }
-        let q = content_tokens(&self.tokenizer, &normalize(trimmed));
+        let q = content_tokens(&self.tokenizer, trimmed);
         if !is_question(trimmed) {
             let n = self.ingest(trimmed, "pernyataan pengguna", 0.9)?;
             let text = if n > 0 {

@@ -1,6 +1,7 @@
 mod dialogue;
 mod engine;
 mod language;
+mod stopwords;
 mod types;
 pub use engine::Conversation;
 pub use types::{Answer, ConversationError, Sentence, Turn};

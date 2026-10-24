@@ -115,18 +115,13 @@ impl Conversation {
         let mut facts = HashMap::new();
         let mut graph = KnowledgeGraph::new();
         let records = memory.load_records()?;
+        let tokenizer = Tokenizer::new(vocab);
         for r in records
             .into_iter()
             .filter(|r| r.kind == MemoryKind::Fact && !r.text.starts_with("Pengguna:"))
         {
-            for raw in r.text.split(['.', '!', '?', '\n']) {
-                let n = raw.trim().to_lowercase();
-                let tok = Tokenizer::new(vocab)
-                    .tokenize(&n)
-                    .into_iter()
-                    .map(|x| x.text)
-                    .filter(|x| x.len() > 2)
-                    .collect::<Vec<_>>();
+            for raw in split_sentences(&r.text) {
+                let tok = content_tokens(&tokenizer, &raw);
                 if !tok.is_empty() {
                     facts.insert(
                         key_for(&tok),
@@ -154,7 +149,7 @@ impl Conversation {
                             node_kind: r.node_kind.clone(),
                         },
                     );
-                    for relation in extract_relations(raw, &r.source) {
+                    for relation in extract_relations(&raw, &r.source) {
                         if matches!(r.source.as_str(), "rebut" | "retract") {
                             graph.relations.retain(|stored| stored != &relation);
                         } else if r.source == "koreksi pengguna" {
@@ -172,7 +167,7 @@ impl Conversation {
         }
         Ok(Self {
             memory,
-            tokenizer: Tokenizer::new(vocab),
+            tokenizer,
             network: LifNetwork::new(vocab, 1.0, 20.0, 2),
             stdp: StdpState::new(vocab),
             turns: vec![],

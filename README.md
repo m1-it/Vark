@@ -88,6 +88,12 @@ Reasoning trace terstruktur menyimpan pertanyaan, fakta yang dipakai, kesimpulan
 
 Saat startup, corpus fakta dan percakapan melatih BPE, Unigram, dan decoder n-gram runtime. Jalur chat memanggil BPE/Unigram untuk assembly konsep dan n-gram untuk perplexity. Registry assembly LIF dikunci ke hash string subword stabil, bukan ID tokenizer, sehingga retraining tidak memutus asosiasi konsep.
 
+## Pemrosesan bahasa dan graph semantik
+
+`split_sentences()` menjaga desimal, singkatan, inisial, URL, email, tanda kutip, dan kurung saat memisahkan kalimat. `content_tokens()` menggunakan huruf kecil Unicode serta daftar stopword eksplisit Indonesia/Inggris; token pendek, angka, tanda `#`, `_`, hyphen, dan negasi dipertahankan. Tidak ada ambang byte-length yang membuang token secara diam-diam.
+
+`vark-memory/src/semantic/extraction.rs` mengekstrak nol hingga beberapa relasi per input dengan predicate yang dikenali secara eksplisit. Koma/konjungsi membelah klausa hanya jika segmen sesudahnya juga berisi predicate yang dikenali, sehingga daftar kata di dalam objek tidak otomatis berubah menjadi relasi. Relasi mendukung predicate dasar bilingual, nilai/unit, qualifier tempat/waktu/kondisi, negasi berkuantor, serta bentuk `if_then`; pola ambigu menghasilkan nol relasi. `KnowledgeGraph` menyelesaikan alias ke ID entitas kanonik, dan field baru memakai default serde untuk membaca record lama.
+
 ## LIF dan pembelajaran
 
 Jaringan LIF memakai tepat 10 incoming edge unik per neuron saat inisialisasi, batas keras fan-in 50, batch builder CSR, pertumbuhan co-active dengan penggantian bobot terlemah, registry konsep terserialisasi, STDP sepanjang trace timestep, reward konfirmasi/bantahan, dan checkpoint yang dimuat kembali saat start. Pertanyaan async sekarang melewati aktivasi LIF sebelum router memilih jawaban.
